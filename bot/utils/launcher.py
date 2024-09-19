@@ -2,6 +2,7 @@ import os
 import glob
 import asyncio
 import argparse
+import random
 from itertools import cycle
 
 from pyrogram import Client
@@ -29,15 +30,13 @@ Select an action:
 
 global tg_clients
 
-
 def get_session_names() -> list[str]:
-    session_names = sorted(glob.glob("sessions/*.session"))
+    session_names = glob.glob("sessions/*.session")
     session_names = [
         os.path.splitext(os.path.basename(file))[0] for file in session_names
     ]
-
-    return session_names
-
+    # Sort session names numerically
+    return sorted(session_names, key=lambda x: int(''.join(filter(str.isdigit, x))))
 
 def get_proxies() -> list[Proxy]:
     if settings.USE_PROXY_FROM_FILE:
@@ -45,9 +44,7 @@ def get_proxies() -> list[Proxy]:
             proxies = [Proxy.from_str(proxy=row.strip()).as_url for row in file]
     else:
         proxies = []
-
     return proxies
-
 
 async def get_tg_clients() -> list[Client]:
     global tg_clients
@@ -73,7 +70,6 @@ async def get_tg_clients() -> list[Client]:
 
     return tg_clients
 
-
 async def process() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("-a", "--action", type=int, help="Action to perform")
@@ -98,26 +94,42 @@ async def process() -> None:
 
     if action == 1:
         tg_clients = await get_tg_clients()
-
         await run_tasks(tg_clients=tg_clients)
-
     elif action == 2:
         await register_sessions()
 
-
-
+async def run_tapper_with_delay(tg_client: Client, proxy: Proxy, delay: float):
+    await asyncio.sleep(delay)
+    logger.info(f"{tg_client.name} | Proxy IP: {proxy.split('@')[-1].split(':')[0]} | Delay: {delay:.2f}s")
+    await run_tapper(tg_client=tg_client, proxy=proxy)
 
 async def run_tasks(tg_clients: list[Client]):
     proxies = get_proxies()
-    proxies_cycle = cycle(proxies) if proxies else None
+    
+    # Match clients with proxies
+    client_proxy_pairs = list(zip(tg_clients, proxies))
+    
+    # If there are more clients than proxies, cycle through proxies
+    if len(tg_clients) > len(proxies):
+        remaining_clients = tg_clients[len(proxies):]
+        remaining_proxies = cycle(proxies)
+        client_proxy_pairs.extend(zip(remaining_clients, remaining_proxies))
+    
+    # Generate random delays
+    delays = [random.uniform(0, 60) for _ in range(len(client_proxy_pairs))]
+    
     tasks = [
         asyncio.create_task(
-            run_tapper(
+            run_tapper_with_delay(
                 tg_client=tg_client,
-                proxy=next(proxies_cycle) if proxies_cycle else None,
+                proxy=proxy,
+                delay=delay
             )
         )
-        for tg_client in tg_clients
+        for (tg_client, proxy), delay in zip(client_proxy_pairs, delays)
     ]
 
     await asyncio.gather(*tasks)
+
+if __name__ == "__main__":
+    asyncio.run(process())
